@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars and fill in. DO NOT COMMIT terraform.tfvars.
+#
+# Nothing secret belongs in this file — these are all non-sensitive
+# identifiers. Real secrets go in Secrets Manager and are referenced by ARN.
+
+aws_region  = "eu-west-1"
+project     = "finzla"
+environment = "dev"
+vpc_cidr    = "10.10.0.0/16"
+
+github_org  = "your-github-org"
+github_repo = "finzla-platform"
+
+# From: cd ../../bootstrap && terraform output
+state_bucket      = "finzla-tfstate-123456789012"
+state_kms_key_arn = "arn:aws:kms:eu-west-1:123456789012:key/REPLACE-ME"
+
+# Pre-existing validated ACM cert in aws_region
+certificate_arn = "arn:aws:acm:eu-west-1:123456789012:certificate/REPLACE-ME"
+
+warning_alert_emails = ["platform-team@example.com"]

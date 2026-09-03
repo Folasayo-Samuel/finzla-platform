@@ -1,0 +1,258 @@
+name: Reusable deploy
+
+# Shared by dev and prod so the deployment logic exists once. The calling
+# workflow supplies the environment, which drives both the GitHub approval
+# gate and which AWS role the OIDC token is allowed to assume.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      image_uri:
+        required: true
+        type: string
+      image_digest:
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+
+    # The approval gate. For `prod`, GitHub Environment protection rules
+    # (required reviewers) hold this job until a human approves.
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.APP_URL }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ inputs.environment }}-${{ github.run_id }}
+
+      # -----------------------------------------------------------------------
+      # Capture the currently-deployed task definition BEFORE changing
+      # anything. This is our manual rollback target if the automated
+      # circuit breaker somehow does not fire.
+      # -----------------------------------------------------------------------
+      - name: Record current deployment for rollback
+        id: current
+        run: |
+          CURRENT=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}" \
+            --query 'services[0].taskDefinition' --output text)
+          echo "task_definition=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "Rollback target: ${CURRENT}"
+
+      # -----------------------------------------------------------------------
+      # Register a new task definition revision with the new image.
+      #
+      # We read the live definition and patch only the image field, so any
+      # change Terraform has made (cpu, memory, secrets) is preserved. This
+      # avoids the classic bug where the pipeline overwrites infrastructure
+      # settings with stale values from a checked-in JSON file.
+      # -----------------------------------------------------------------------
+      - name: Register new task definition
+        id: taskdef
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-task-definition \
+            --task-definition "${{ vars.ECS_TASK_FAMILY }}" \
+            --query 'taskDefinition' > current-taskdef.json
+
+          # Pin by digest when available — a digest is immutable, a tag is
+          # merely conventionally immutable.
+          IMAGE="${{ inputs.image_uri }}"
+          if [ -n "${{ inputs.image_digest }}" ]; then
+            REPO_PART="${IMAGE%%:*}"
+            IMAGE="${REPO_PART}@${{ inputs.image_digest }}"
+          fi
+          echo "Deploying image: ${IMAGE}"
+
+          jq --arg IMAGE "$IMAGE" '
+            .containerDefinitions[0].image = $IMAGE
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy,
+                .deregisteredAt
+              )
+          ' current-taskdef.json > new-taskdef.json
+
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          echo "task_definition=${NEW_ARN}" >> "$GITHUB_OUTPUT"
+          echo "New revision: ${NEW_ARN}"
+
+      # -----------------------------------------------------------------------
+      # Deploy. The ECS deployment circuit breaker (configured in Terraform)
+      # will roll back automatically if tasks fail to reach a steady state.
+      # -----------------------------------------------------------------------
+      - name: Update service
+        run: |
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --service "${{ vars.ECS_SERVICE }}" \
+            --task-definition "${{ steps.taskdef.outputs.task_definition }}" \
+            --no-cli-pager > /dev/null
+          echo "deployment initiated"
+
+      - name: Wait for service to stabilise
+        id: stabilise
+        continue-on-error: true
+        run: |
+          # services-stable polls until running == desired and no in-flight
+          # deployment remains. Default is 40 attempts at 15s = 10 minutes.
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}"
+
+      # -----------------------------------------------------------------------
+      # Health verification. `services-stable` means ECS is happy; it does
+      # NOT mean customers can reach a working application. This step is
+      # what distinguishes "tasks running" from "service healthy" — exactly
+      # the gap in the troubleshooting scenario.
+      # -----------------------------------------------------------------------
+      - name: Verify target health
+        id: targets
+        if: steps.stabilise.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          TG_ARN=$(aws elbv2 describe-target-groups \
+            --names "${{ vars.TARGET_GROUP_NAME }}" \
+            --query 'TargetGroups[0].TargetGroupArn' --output text)
+
+          for i in $(seq 1 20); do
+            HEALTHY=$(aws elbv2 describe-target-health \
+              --target-group-arn "$TG_ARN" \
+              --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' \
+              --output text)
+            TOTAL=$(aws elbv2 describe-target-health \
+              --target-group-arn "$TG_ARN" \
+              --query 'length(TargetHealthDescriptions)' --output text)
+
+            echo "attempt ${i}: ${HEALTHY}/${TOTAL} targets healthy"
+            if [ "$HEALTHY" -ge 1 ] && [ "$HEALTHY" -eq "$TOTAL" ]; then
+              echo "all targets healthy"
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "::error::targets did not become healthy"
+          aws elbv2 describe-target-health --target-group-arn "$TG_ARN" \
+            --query 'TargetHealthDescriptions[].{Target:Target.Id,State:TargetHealth.State,Reason:TargetHealth.Reason,Desc:TargetHealth.Description}' \
+            --output table
+          exit 1
+
+      - name: Smoke test through the load balancer
+        id: smoke
+        if: steps.targets.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          URL="${{ vars.APP_URL }}"
+
+          echo "--- GET ${URL}/health"
+          CODE=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 10 --retry 3 "${URL}/health")
+          cat /tmp/health.json; echo
+          if [ "$CODE" != "200" ]; then
+            echo "::error::/health returned ${CODE}"
+            exit 1
+          fi
+
+          echo "--- GET ${URL}/version"
+          curl -sS --max-time 10 "${URL}/version" | tee /tmp/version.json; echo
+
+          # Confirm the deployed commit is the one we just built. Guards
+          # against a silently failed rollout that left the old version live.
+          DEPLOYED_SHA=$(jq -r '.git_sha' /tmp/version.json)
+          if [ "$DEPLOYED_SHA" != "${{ github.sha }}" ]; then
+            echo "::error::version mismatch — expected ${{ github.sha }}, got ${DEPLOYED_SHA}"
+            exit 1
+          fi
+          echo "verified: running commit ${DEPLOYED_SHA}"
+
+      # -----------------------------------------------------------------------
+      # Rollback. Runs when stabilisation, target health, or the smoke test
+      # failed. Explicitly re-points the service at the previously recorded
+      # task definition — belt and braces alongside the ECS circuit breaker.
+      # -----------------------------------------------------------------------
+      - name: Roll back on failure
+        if: |
+          steps.stabilise.outcome == 'failure' ||
+          steps.targets.outcome == 'failure' ||
+          steps.smoke.outcome == 'failure'
+        run: |
+          echo "::warning::deployment failed verification — rolling back"
+
+          echo "--- recent service events"
+          aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}" \
+            --query 'services[0].events[:10].[createdAt,message]' --output table || true
+
+          echo "--- stopped task reasons"
+          for TASK in $(aws ecs list-tasks --cluster "${{ vars.ECS_CLUSTER }}" \
+              --service-name "${{ vars.ECS_SERVICE }}" --desired-status STOPPED \
+              --query 'taskArns[:3]' --output text); do
+            aws ecs describe-tasks --cluster "${{ vars.ECS_CLUSTER }}" --tasks "$TASK" \
+              --query 'tasks[0].{stopCode:stopCode,reason:stoppedReason,containers:containers[].{name:name,reason:reason,exitCode:exitCode}}' \
+              --output json || true
+          done
+
+          echo "--- application logs"
+          aws logs tail "${{ vars.LOG_GROUP }}" --since 10m --format short || true
+
+          echo "--- reverting to ${{ steps.current.outputs.task_definition }}"
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --service "${{ vars.ECS_SERVICE }}" \
+            --task-definition "${{ steps.current.outputs.task_definition }}" \
+            --no-cli-pager > /dev/null
+
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}"
+
+          echo "::error::deployment rolled back to previous version"
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          {
+            echo "### Deployment — ${{ inputs.environment }}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Result | ${{ job.status }} |"
+            echo "| Image | \`${{ inputs.image_uri }}\` |"
+            echo "| Task definition | \`${{ steps.taskdef.outputs.task_definition }}\` |"
+            echo "| Previous | \`${{ steps.current.outputs.task_definition }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

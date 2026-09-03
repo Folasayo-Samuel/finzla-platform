@@ -1,0 +1,56 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+# Contains environment-specific values; only the .example is committed
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+.terraformrc
+terraform.rc
+plan.txt
+plan-trunc.txt
+*-taskdef.json
+
+# Secrets — belt and braces alongside Gitleaks in CI
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials
+.aws/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Scan output
+checkov.sarif
+trivy.sarif
+
+# Incident artifacts (may contain customer data)
+incident-*.txt
+incident-*.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

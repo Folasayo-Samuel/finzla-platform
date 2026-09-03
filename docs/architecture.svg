@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 720" width="980" height="720" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#37475a"/>
+    </marker>
+    <marker id="arrowDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a97a5"/>
+    </marker>
+  </defs>
+
+  <rect width="980" height="720" fill="#ffffff"/>
+  <text x="24" y="34" font-size="19" font-weight="bold" fill="#0d2b45">Finzla Platform — ECS Fargate on AWS</text>
+  <text x="24" y="54" font-size="11.5" fill="#5a6b7c">Request path: Internet → Route 53 → ALB (TLS terminate) → private subnet task ENI → container :8000</text>
+
+  <!-- CI/CD lane -->
+  <rect x="24" y="72" width="300" height="150" rx="6" fill="#f7f9fb" stroke="#c8d4e0"/>
+  <text x="38" y="92" font-size="12" font-weight="bold" fill="#0d2b45">GitHub</text>
+  <rect x="38" y="102" width="126" height="34" rx="4" fill="#ffffff" stroke="#9fb3c8"/>
+  <text x="101" y="123" font-size="10.5" text-anchor="middle" fill="#24507a">Pull request</text>
+  <rect x="182" y="102" width="126" height="34" rx="4" fill="#ffffff" stroke="#9fb3c8"/>
+  <text x="245" y="117" font-size="10.5" text-anchor="middle" fill="#24507a">Validate + plan</text>
+  <text x="245" y="130" font-size="9" text-anchor="middle" fill="#7a8b9a">read-only role</text>
+  <rect x="38" y="148" width="126" height="34" rx="4" fill="#ffffff" stroke="#9fb3c8"/>
+  <text x="101" y="169" font-size="10.5" text-anchor="middle" fill="#24507a">Merge to main</text>
+  <rect x="182" y="148" width="126" height="34" rx="4" fill="#fff8e6" stroke="#d9a018"/>
+  <text x="245" y="163" font-size="10.5" text-anchor="middle" fill="#4a3a12">Approval gate</text>
+  <text x="245" y="176" font-size="9" text-anchor="middle" fill="#8a7440">prod environment</text>
+  <text x="38" y="203" font-size="9.5" fill="#5a6b7c">OIDC — short-lived STS credentials,</text>
+  <text x="38" y="215" font-size="9.5" fill="#5a6b7c">sub claim scoped to repo + environment</text>
+
+  <!-- ECR -->
+  <rect x="356" y="72" width="150" height="72" rx="6" fill="#eef4fa" stroke="#336791"/>
+  <text x="431" y="94" font-size="11.5" font-weight="bold" text-anchor="middle" fill="#0d2b45">ECR</text>
+  <text x="431" y="110" font-size="9.5" text-anchor="middle" fill="#5a6b7c">immutable tags</text>
+  <text x="431" y="123" font-size="9.5" text-anchor="middle" fill="#5a6b7c">scan on push · KMS</text>
+  <text x="431" y="136" font-size="9.5" text-anchor="middle" fill="#5a6b7c">sha-&lt;commit&gt;</text>
+
+  <path d="M 308 119 L 350 105" stroke="#37475a" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="318" y="100" font-size="8.5" fill="#5a6b7c">push</text>
+
+  <!-- Internet -->
+  <ellipse cx="700" cy="104" rx="66" ry="30" fill="#f0f3f6" stroke="#7a8b9a"/>
+  <text x="700" y="101" font-size="11.5" font-weight="bold" text-anchor="middle" fill="#37475a">Internet</text>
+  <text x="700" y="115" font-size="9" text-anchor="middle" fill="#7a8b9a">customers</text>
+
+  <rect x="800" y="80" width="150" height="48" rx="6" fill="#eef4fa" stroke="#336791"/>
+  <text x="875" y="99" font-size="11" font-weight="bold" text-anchor="middle" fill="#0d2b45">Route 53</text>
+  <text x="875" y="115" font-size="9.5" text-anchor="middle" fill="#5a6b7c">alias → ALB</text>
+  <path d="M 766 104 L 794 104" stroke="#37475a" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- VPC -->
+  <rect x="356" y="168" width="594" height="446" rx="8" fill="#fbfcfd" stroke="#336791" stroke-width="1.8"/>
+  <text x="372" y="189" font-size="12" font-weight="bold" fill="#0d2b45">VPC  10.20.0.0/16</text>
+  <text x="372" y="203" font-size="9" fill="#7a8b9a">flow logs → CloudWatch</text>
+
+  <!-- Public subnets -->
+  <rect x="372" y="216" width="562" height="120" rx="6" fill="#eef7ee" stroke="#5a9e5a" stroke-dasharray="4 3"/>
+  <text x="386" y="234" font-size="10.5" font-weight="bold" fill="#2f6b2f">Public subnets — AZ a / AZ b</text>
+
+  <rect x="470" y="244" width="200" height="56" rx="5" fill="#ffffff" stroke="#5a9e5a" stroke-width="1.6"/>
+  <text x="570" y="263" font-size="11" font-weight="bold" text-anchor="middle" fill="#2f6b2f">Application Load Balancer</text>
+  <text x="570" y="278" font-size="9" text-anchor="middle" fill="#5a6b7c">HTTPS 443 · TLS 1.2+ · ACM</text>
+  <text x="570" y="291" font-size="9" text-anchor="middle" fill="#5a6b7c">80 → 301 redirect</text>
+
+  <rect x="700" y="244" width="106" height="56" rx="5" fill="#ffffff" stroke="#5a9e5a"/>
+  <text x="753" y="266" font-size="10" font-weight="bold" text-anchor="middle" fill="#2f6b2f">NAT GW</text>
+  <text x="753" y="281" font-size="8.5" text-anchor="middle" fill="#5a6b7c">×2 in prod</text>
+
+  <rect x="386" y="244" width="72" height="56" rx="5" fill="#ffffff" stroke="#5a9e5a"/>
+  <text x="422" y="266" font-size="9.5" font-weight="bold" text-anchor="middle" fill="#2f6b2f">IGW</text>
+
+  <text x="386" y="322" font-size="8.5" fill="#5a6b7c">SG: ingress 443 + 80 from 0.0.0.0/0 · egress only to task port inside VPC</text>
+
+  <path d="M 700 134 L 700 240" stroke="#37475a" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+  <text x="708" y="200" font-size="9" fill="#37475a">HTTPS</text>
+
+  <!-- Private subnets -->
+  <rect x="372" y="352" width="562" height="150" rx="6" fill="#fdf4f4" stroke="#c05656" stroke-dasharray="4 3"/>
+  <text x="386" y="370" font-size="10.5" font-weight="bold" fill="#8f3535">Private subnets — no inbound route from the internet</text>
+
+  <rect x="420" y="382" width="164" height="76" rx="5" fill="#ffffff" stroke="#c05656" stroke-width="1.6"/>
+  <text x="502" y="401" font-size="10.5" font-weight="bold" text-anchor="middle" fill="#8f3535">Fargate task — AZ a</text>
+  <text x="502" y="416" font-size="9" text-anchor="middle" fill="#5a6b7c">container :8000</text>
+  <text x="502" y="429" font-size="9" text-anchor="middle" fill="#5a6b7c">uid 10001 · read-only fs</text>
+  <text x="502" y="447" font-size="8.5" text-anchor="middle" fill="#7a8b9a">GET /health · /version</text>
+
+  <rect x="606" y="382" width="164" height="76" rx="5" fill="#ffffff" stroke="#c05656" stroke-width="1.6"/>
+  <text x="688" y="401" font-size="10.5" font-weight="bold" text-anchor="middle" fill="#8f3535">Fargate task — AZ b</text>
+  <text x="688" y="416" font-size="9" text-anchor="middle" fill="#5a6b7c">container :8000</text>
+  <text x="688" y="429" font-size="9" text-anchor="middle" fill="#5a6b7c">uid 10001 · read-only fs</text>
+  <text x="688" y="447" font-size="8.5" text-anchor="middle" fill="#7a8b9a">autoscale 2 → 10</text>
+
+  <rect x="792" y="382" width="128" height="76" rx="5" fill="#ffffff" stroke="#9fb3c8"/>
+  <text x="856" y="401" font-size="10" font-weight="bold" text-anchor="middle" fill="#24507a">VPC endpoints</text>
+  <text x="856" y="416" font-size="8.5" text-anchor="middle" fill="#5a6b7c">ECR · Logs</text>
+  <text x="856" y="428" font-size="8.5" text-anchor="middle" fill="#5a6b7c">Secrets · SSM</text>
+  <text x="856" y="446" font-size="8.5" text-anchor="middle" fill="#5a6b7c">S3 gateway</text>
+
+  <text x="386" y="478" font-size="8.5" font-weight="bold" fill="#8f3535">SG: ingress ONLY from ALB security group id — not a CIDR. No path from the internet.</text>
+  <text x="386" y="492" font-size="8.5" fill="#5a6b7c">egress 443 only · assign_public_ip = false</text>
+
+  <path d="M 545 304 L 510 378" stroke="#37475a" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <path d="M 596 304 L 672 378" stroke="#37475a" stroke-width="1.6" fill="none" marker-end="url(#arrow)"/>
+  <text x="600" y="345" font-size="8.5" fill="#37475a">HTTP :8000</text>
+
+  <path d="M 780 420 L 788 420" stroke="#8a97a5" stroke-width="1.4" fill="none" marker-end="url(#arrowDim)"/>
+  <path d="M 753 378 L 753 300" stroke="#8a97a5" stroke-width="1.3" stroke-dasharray="3 2" fill="none" marker-end="url(#arrowDim)"/>
+  <text x="760" y="345" font-size="8" fill="#8a97a5">egress</text>
+
+  <path d="M 431 148 L 431 158 L 862 158 L 862 376" stroke="#8a97a5" stroke-width="1.3" stroke-dasharray="4 3" fill="none" marker-end="url(#arrowDim)"/>
+  <text x="700" y="153" font-size="8" fill="#8a97a5">image pull via endpoint</text>
+
+  <!-- Observability -->
+  <rect x="372" y="518" width="562" height="82" rx="6" fill="#f7f9fb" stroke="#c8d4e0"/>
+  <text x="386" y="537" font-size="10.5" font-weight="bold" fill="#0d2b45">Observability</text>
+  <text x="386" y="554" font-size="9" fill="#5a6b7c">CloudWatch Logs  /ecs/finzla-prod/app  · 90d · KMS</text>
+  <text x="386" y="568" font-size="9" fill="#5a6b7c">Alarms: 5xx rate, no healthy targets (critical) · p99 latency, CPU, memory (warning)</text>
+  <text x="386" y="582" font-size="9" fill="#5a6b7c">ALB access logs → S3 · VPC flow logs · Container Insights · SNS → on-call</text>
+  <text x="386" y="596" font-size="8.5" fill="#7a8b9a">Deployment circuit breaker: failed health checks roll back to the previous task definition automatically</text>
+
+  <!-- Legend -->
+  <rect x="24" y="238" width="300" height="182" rx="6" fill="#f7f9fb" stroke="#c8d4e0"/>
+  <text x="38" y="258" font-size="11" font-weight="bold" fill="#0d2b45">Trust boundaries</text>
+  <rect x="38" y="268" width="12" height="12" fill="#eef7ee" stroke="#5a9e5a"/>
+  <text x="58" y="278" font-size="9.5" fill="#5a6b7c">Public — ALB and NAT only</text>
+  <rect x="38" y="288" width="12" height="12" fill="#fdf4f4" stroke="#c05656"/>
+  <text x="58" y="298" font-size="9.5" fill="#5a6b7c">Private — application tasks</text>
+  <text x="38" y="322" font-size="11" font-weight="bold" fill="#0d2b45">IAM role separation</text>
+  <text x="38" y="339" font-size="9" fill="#5a6b7c">plan — read-only, PRs</text>
+  <text x="38" y="353" font-size="9" fill="#5a6b7c">deploy — ECR push + UpdateService</text>
+  <text x="38" y="367" font-size="9" fill="#5a6b7c">apply — infra, environment-gated</text>
+  <text x="38" y="381" font-size="9" fill="#5a6b7c">execution — image pull, log write</text>
+  <text x="38" y="395" font-size="9" fill="#5a6b7c">task — near-empty (app runtime)</text>
+  <text x="38" y="412" font-size="8.5" fill="#7a8b9a">iam:PassRole restricted to the two task roles</text>
+
+  <rect x="24" y="436" width="300" height="178" rx="6" fill="#f7f9fb" stroke="#c8d4e0"/>
+  <text x="38" y="456" font-size="11" font-weight="bold" fill="#0d2b45">Environment separation</text>
+  <text x="38" y="474" font-size="9" fill="#5a6b7c">dev   10.10.0.0/16 · 1 NAT · 1 task · Spot</text>
+  <text x="38" y="488" font-size="9" fill="#5a6b7c">prod  10.20.0.0/16 · 2 NAT · 2+ tasks</text>
+  <text x="38" y="504" font-size="9" fill="#5a6b7c">Separate root modules and state keys.</text>
+  <text x="38" y="518" font-size="9" fill="#5a6b7c">Non-overlapping CIDRs. Ideally separate</text>
+  <text x="38" y="532" font-size="9" fill="#5a6b7c">AWS accounts — layout supports it.</text>
+  <text x="38" y="552" font-size="11" font-weight="bold" fill="#0d2b45">State</text>
+  <text x="38" y="569" font-size="9" fill="#5a6b7c">S3 · versioned · KMS · TLS-only policy</text>
+  <text x="38" y="583" font-size="9" fill="#5a6b7c">DynamoDB lock · PITR</text>
+  <text x="38" y="597" font-size="9" fill="#5a6b7c">Per-env key; dev cannot read prod state</text>
+</svg>

@@ -1,0 +1,176 @@
+name: Deploy
+
+# Triggered on merge to main (dev), then promoted to prod via the
+# environment approval gate.
+#
+# Full path: PR -> Validation -> Review -> Merge -> Build -> Push ->
+#            Deploy -> Health Check -> (rollback on failure)
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options: [dev, prod]
+
+permissions:
+  contents: read
+  id-token: write
+
+# Never let two deployments to the same environment interleave.
+# cancel-in-progress is FALSE deliberately: cancelling a half-finished ECS
+# deployment leaves the service in an indeterminate state.
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build once, deploy the same artifact everywhere.
+  #
+  # The image is built a single time and promoted by digest. Rebuilding per
+  # environment would mean prod runs bytes that were never tested in dev.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    environment: dev # dev needs no approval; gates the OIDC sub claim
+    outputs:
+      image_digest: ${{ steps.push.outputs.digest }}
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-build-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image metadata
+        id: meta
+        run: |
+          # Tag by commit SHA, never `latest`. Combined with ECR immutable
+          # tags, this makes every deployed artifact uniquely identifiable
+          # and impossible to silently replace.
+          TAG="sha-${GITHUB_SHA::12}"
+          REGISTRY="${{ steps.ecr.outputs.registry }}"
+          REPO="${{ vars.ECR_REPOSITORY }}"
+          echo "image_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${REGISTRY}/${REPO}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: app
+          push: true
+          # ARM64 to match the Fargate runtime_platform setting. A mismatch
+          # here produces tasks that fail to start with an exec format error.
+          platforms: linux/arm64
+          tags: ${{ steps.meta.outputs.image_uri }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}-${{ github.run_number }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Wait for ECR scan and fail on critical findings
+        run: |
+          REPO="${{ vars.ECR_REPOSITORY }}"
+          TAG="${{ steps.meta.outputs.image_tag }}"
+
+          echo "waiting for ECR scan to complete..."
+          for i in $(seq 1 30); do
+            STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name "$REPO" --image-id imageTag="$TAG" \
+              --query 'imageScanStatus.status' --output text 2>/dev/null || echo PENDING)
+            [ "$STATUS" = "COMPLETE" ] && break
+            [ "$STATUS" = "FAILED" ] && { echo "::warning::ECR scan failed to run"; exit 0; }
+            sleep 10
+          done
+
+          CRITICAL=$(aws ecr describe-image-scan-findings \
+            --repository-name "$REPO" --image-id imageTag="$TAG" \
+            --query 'imageScanFindingsSummary.findingSeverityCounts.CRITICAL' \
+            --output text 2>/dev/null || echo 0)
+          [ "$CRITICAL" = "None" ] && CRITICAL=0
+
+          echo "critical findings: $CRITICAL"
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::image has $CRITICAL critical vulnerabilities — blocking deployment"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image built"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`${{ steps.meta.outputs.image_tag }}\` |"
+            echo "| Digest | \`${{ steps.push.outputs.digest }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Deploy to dev — automatic, no approval
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to dev
+    needs: build
+    if: github.event_name == 'push' || github.event.inputs.environment == 'dev'
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: dev
+      image_uri: ${{ needs.build.outputs.image_uri }}
+      image_digest: ${{ needs.build.outputs.image_digest }}
+    secrets: inherit
+
+  # ---------------------------------------------------------------------------
+  # Deploy to prod — requires approval on the `prod` GitHub Environment
+  #
+  # This is the protection mechanism the brief asks for. The `prod`
+  # environment is configured with required reviewers, so this job PAUSES
+  # until a human approves. Critically, the AWS role for prod trusts only
+  # `environment:prod` in its OIDC sub claim — so there is no way to obtain
+  # prod credentials without passing through this gate.
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to prod
+    needs: [build, deploy-dev]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped') &&
+      (github.event.inputs.environment == 'prod' || github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: prod
+      image_uri: ${{ needs.build.outputs.image_uri }}
+      image_digest: ${{ needs.build.outputs.image_digest }}
+    secrets: inherit

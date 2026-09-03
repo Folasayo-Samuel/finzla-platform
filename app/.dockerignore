@@ -1,0 +1,21 @@
+# Never ship these into the build context.
+.git
+.github
+.gitignore
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+.venv
+venv
+tests/
+terraform/
+docs/
+*.md
+.env
+.env.*
+*.pem
+*.key
+*.tfstate
+*.tfstate.*
+.terraform/

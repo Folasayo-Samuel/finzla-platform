@@ -1,0 +1,340 @@
+name: PR Validation
+
+# Runs on every pull request. Nothing here can mutate AWS: the only role it
+# assumes is the read-only plan role, and it is scoped by OIDC to this
+# repository's pull_request events.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege at the workflow level too. `id-token: write` is what
+# allows OIDC federation; it does NOT grant write access to the repo.
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write # to post the plan as a comment
+  security-events: write # to upload SARIF findings
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: eu-west-1
+  TF_VERSION: 1.16.1
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Application: lint, test, and prove the image builds
+  # ---------------------------------------------------------------------------
+  app:
+    name: Application build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: app/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: app
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        working-directory: app
+        run: ruff check .
+
+      - name: Format check
+        working-directory: app
+        run: ruff format --check .
+
+      - name: Unit tests
+        working-directory: app
+        run: python -m pytest -v
+
+      # Environment-dependent behaviour: OpenAPI must be off when
+      # APP_ENV=prod, and the 503 readiness path must work. Separate from
+      # pytest because it re-imports the module under different env vars.
+      - name: Verify environment-dependent behaviour
+        working-directory: app
+        run: PYTHONPATH=. python tests/verify_behaviour.py
+
+      # Build here purely as a gate — the image is NOT pushed from a PR.
+      # Pushing from an untrusted PR branch would let a fork poison the
+      # registry.
+      - name: Build image (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: app
+          push: false
+          load: true
+          tags: finzla-app:pr-${{ github.event.pull_request.number || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            APP_VERSION=pr-${{ github.event.pull_request.number || 'manual' }}
+
+      # Smoke test: start the container and confirm the endpoints the ALB
+      # depends on actually respond. Catches "builds fine, won't boot".
+      - name: Smoke test the container
+        run: |
+          docker run -d --name smoke -p 8000:8000 \
+            -e APP_ENV=ci \
+            finzla-app:pr-${{ github.event.pull_request.number || github.sha }}
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
+              echo "health check passed after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::container did not become healthy within 30s"
+              docker logs smoke
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "--- /health"
+          curl -fsS http://localhost:8000/health | tee /tmp/health.json
+          echo "--- /version"
+          curl -fsS http://localhost:8000/version | tee /tmp/version.json
+
+          # Assert the container runs as a non-root user.
+          uid=$(docker exec smoke id -u)
+          if [ "$uid" = "0" ]; then
+            echo "::error::container is running as root"
+            exit 1
+          fi
+          echo "container uid: $uid"
+
+          docker rm -f smoke
+
+  # ---------------------------------------------------------------------------
+  # Security and quality checks (the brief asks for at least one)
+  # ---------------------------------------------------------------------------
+  security:
+    name: Security scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 1. Terraform static analysis — misconfigurations, not syntax.
+      #    Catches things like open security groups and unencrypted storage.
+      - name: Checkov (IaC misconfiguration)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
+          # Skips justified inline:
+          #   CKV_AWS_18  — ALB log bucket does not need its own access
+          #                 logging; that recurses.
+          #   CKV_AWS_144 — cross-region replication is out of scope.
+          skip_check: CKV_AWS_18,CKV_AWS_144
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      # 2. Container and dependency CVE scanning.
+      - name: Build image for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: app
+          push: false
+          load: true
+          tags: finzla-app:scan
+
+      - name: Trivy (image and dependency CVEs)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: finzla-app:scan
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true # do not block on CVEs with no available patch
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      # Fail the job on fixable CRITICAL findings. Separate step so the
+      # SARIF upload above always runs and findings are visible even on a
+      # failing build.
+      - name: Fail on critical CVEs
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: finzla-app:scan
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+          ignore-unfixed: true
+
+      # 3. Secret detection. The single highest-value check in this file:
+      #    it is what stops an AWS key or private key reaching the repo.
+      # Gitleaks BINARY, not gitleaks-action. The action requires a paid
+      # licence key for organisation-owned repositories, which silently
+      # fails the job. The binary is Apache-2.0 with no licence gate.
+      - name: Gitleaks (secret detection)
+        run: |
+          VERSION=8.30.1
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          # Scan the full history, not just the diff — a secret committed
+          # earlier and later deleted is still exposed in the git objects.
+          ./gitleaks detect --source . --redact --verbose --exit-code 1
+
+      # 4. Python security linting.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Bandit (Python security)
+        working-directory: app
+        run: |
+          pip install bandit
+          bandit -r src/ -f screen
+
+  # ---------------------------------------------------------------------------
+  # Terraform: format, validate, plan
+  # ---------------------------------------------------------------------------
+  terraform:
+    name: Terraform (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, prod]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Format check runs across the whole tree, not just this environment,
+      # so unformatted module code cannot slip through.
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+        working-directory: terraform
+
+      # OIDC federation. No stored AWS credentials — this exchanges the
+      # GitHub-issued JWT for ~1 hour STS credentials scoped to the
+      # read-only plan role.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-plan-${{ github.run_id }}
+
+      - name: terraform init
+        working-directory: terraform/envs/${{ matrix.environment }}
+        run: |
+          # No dynamodb_table: locking is S3-native (use_lockfile in the
+          # backend block), GA since Terraform 1.11.
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="kms_key_id=${{ vars.TF_STATE_KMS_KEY_ARN }}"
+
+      - name: terraform validate
+        working-directory: terraform/envs/${{ matrix.environment }}
+        run: terraform validate -no-color
+
+      - name: terraform plan
+        id: plan
+        working-directory: terraform/envs/${{ matrix.environment }}
+        # continue-on-error so a plan failure still posts its output to the
+        # PR; the check-plan step below is what actually fails the job.
+        continue-on-error: true
+        run: |
+          terraform plan -no-color -lock-timeout=5m -out=tfplan \
+            -var="github_org=${{ github.repository_owner }}" \
+            -var="github_repo=${{ github.event.repository.name }}" \
+            -var="state_bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -var="state_kms_key_arn=${{ vars.TF_STATE_KMS_KEY_ARN }}" \
+            -var="certificate_arn=${{ vars.ACM_CERTIFICATE_ARN }}" \
+            2>&1 | tee plan.txt
+
+          # Truncate for the PR comment — a full plan can exceed GitHub's
+          # 65536-character comment limit.
+          head -c 60000 plan.txt > plan-trunc.txt
+
+      - name: Comment plan on PR
+        uses: actions/github-script@v9
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const dir = 'terraform/envs/${{ matrix.environment }}';
+            let plan = 'Plan output unavailable.';
+            try {
+              plan = fs.readFileSync(`${dir}/plan-trunc.txt`, 'utf8');
+            } catch (e) {
+              core.warning(`could not read plan: ${e.message}`);
+            }
+            const outcome = '${{ steps.plan.outcome }}';
+            const icon = outcome === 'success' ? '✅' : '❌';
+            const body = [
+              `### ${icon} Terraform plan — \`${{ matrix.environment }}\``,
+              '',
+              '<details><summary>Show plan</summary>',
+              '',
+              '```terraform',
+              plan,
+              '```',
+              '',
+              '</details>',
+              '',
+              `_commit ${context.sha.substring(0,7)} · run [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})_`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: |
+          echo "::error::terraform plan failed for ${{ matrix.environment }}"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Single required status check — branch protection points at this one job
+  # ---------------------------------------------------------------------------
+  pr-gate:
+    name: PR gate
+    runs-on: ubuntu-latest
+    needs: [app, security, terraform]
+    if: always()
+    steps:
+      - name: Verify all checks passed
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "::error::one or more validation jobs failed"
+            exit 1
+          fi
+          echo "all validation jobs passed"

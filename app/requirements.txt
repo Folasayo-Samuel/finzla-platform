@@ -1,0 +1,3 @@
+# Verified current on PyPI. Pinned exactly so builds are reproducible.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
