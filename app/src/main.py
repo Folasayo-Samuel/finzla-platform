@@ -118,4 +118,4 @@ async def version() -> dict[str, Any]:
 
 @app.get("/", include_in_schema=False)
 async def root() -> dict[str, str]:
-    return {"service": "finzla-backend", "environment": APP_ENV}
+    return {"service": "finzla-backend-api", "environment": APP_ENV}

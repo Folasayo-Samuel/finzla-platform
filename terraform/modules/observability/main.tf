@@ -176,7 +176,7 @@ resource "aws_cloudwatch_metric_alarm" "latency_p99" {
 
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name        = "${local.name}-cpu-high"
-  alarm_description = "Service CPU above 80% for 10 minutes — check whether autoscaling is keeping up."
+  alarm_description = "Service CPU above 80% for 10 minutes - check whether autoscaling is keeping up."
 
   namespace           = "AWS/ECS"
   metric_name         = "CPUUtilization"
@@ -198,7 +198,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_high" {
 
 resource "aws_cloudwatch_metric_alarm" "memory_high" {
   alarm_name        = "${local.name}-memory-high"
-  alarm_description = "Service memory above 80% for 10 minutes — possible leak, or task_memory set too low."
+  alarm_description = "Service memory above 80% for 10 minutes - possible leak, or task_memory set too low."
 
   namespace           = "AWS/ECS"
   metric_name         = "MemoryUtilization"
@@ -237,7 +237,7 @@ resource "aws_cloudwatch_log_metric_filter" "app_errors" {
 
 resource "aws_cloudwatch_metric_alarm" "app_error_spike" {
   alarm_name        = "${local.name}-app-error-spike"
-  alarm_description = "Application ERROR log volume spiked — inspect the log group for stack traces."
+  alarm_description = "Application ERROR log volume spiked - inspect the log group for stack traces."
 
   namespace           = "Finzla/${var.environment}"
   metric_name         = "ApplicationErrorCount"

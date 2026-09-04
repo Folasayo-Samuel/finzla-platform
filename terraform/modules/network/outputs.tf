@@ -9,12 +9,12 @@ output "vpc_cidr" {
 }
 
 output "public_subnet_ids" {
-  description = "Public subnets — ALB placement only."
+  description = "Public subnets - ALB placement only."
   value       = aws_subnet.public[*].id
 }
 
 output "private_subnet_ids" {
-  description = "Private subnets — ECS task placement."
+  description = "Private subnets - ECS task placement."
   value       = aws_subnet.private[*].id
 }
 
@@ -24,6 +24,6 @@ output "availability_zones" {
 }
 
 output "nat_public_ips" {
-  description = "NAT egress addresses — give these to any third party that IP-allowlists."
+  description = "NAT egress addresses - give these to any third party that IP-allowlists."
   value       = aws_eip.nat[*].public_ip
 }

@@ -26,8 +26,8 @@ terraform {
   # Values come from terraform/bootstrap outputs. Filled via -backend-config
   # in CI so the bucket name is not hard-coded per environment.
   backend "s3" {
-    key          = "prod/terraform.tfstate"
-    encrypt      = true
+    key     = "prod/terraform.tfstate"
+    encrypt = true
     # S3-native locking (GA in Terraform 1.11). Writes a conditional-write
     # lock object alongside state. Replaces the deprecated DynamoDB table.
     use_lockfile = true

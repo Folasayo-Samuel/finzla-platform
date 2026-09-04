@@ -78,8 +78,10 @@ data "aws_iam_policy_document" "repo" {
       type        = "*"
       identifiers = ["*"]
     }
-    actions   = ["ecr:*"]
-    resources = ["*"]
+    actions = ["ecr:*"]
+    # No `resources` block: an ECR repository policy is inherently scoped to
+    # its own repository, and including a Resource element makes the policy
+    # invalid (unlike an IAM identity policy, where it is required).
     condition {
       test     = "Bool"
       variable = "aws:SecureTransport"
