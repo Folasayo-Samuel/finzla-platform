@@ -54,3 +54,4 @@ incident-*.json
 .idea/
 .vscode/
 *.swp
+terraform/bootstrap/terraform.tfstate*
