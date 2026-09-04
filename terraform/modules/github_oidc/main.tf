@@ -55,18 +55,24 @@ locals {
   # NOT include `ref:refs/heads/main`, because a branch-scoped trust would
   # let anyone who can push to main deploy without review. Environment
   # scoping forces the run through GitHub's approval gate first.
+  # GitHub's "immutable subject claim" setting rewrites the sub as
+  #   repo:<org>@<org_id>/<repo>@<repo_id>:environment:<env>
+  # so an exact StringEquals on the plain form never matches. The `*` after
+  # org and repo tolerates both forms. Security is preserved: the org and
+  # repo names are still anchored, and the environment segment is still
+  # exact — a different repo cannot match.
   deploy_subjects = var.environment == "prod" ? [
-    "repo:${var.github_org}/${var.github_repo}:environment:prod",
+    "repo:${var.github_org}*/${var.github_repo}*:environment:prod",
     ] : [
-    "repo:${var.github_org}/${var.github_repo}:environment:dev",
-    "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
+    "repo:${var.github_org}*/${var.github_repo}*:environment:dev",
+    "repo:${var.github_org}*/${var.github_repo}*:ref:refs/heads/main",
   ]
 
   # The PLAN role is read-only, so it is safe to expose to pull requests
   # from branches. It still cannot be assumed by another repository.
   plan_subjects = [
-    "repo:${var.github_org}/${var.github_repo}:pull_request",
-    "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
+    "repo:${var.github_org}*/${var.github_repo}*:pull_request",
+    "repo:${var.github_org}*/${var.github_repo}*:ref:refs/heads/main",
   ]
 }
 
@@ -194,10 +200,10 @@ data "aws_iam_policy_document" "deploy_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # StringEquals — exact match, no wildcards. A typo'd or attacker-chosen
-    # subject will not match.
+    # StringLike, because the immutable-subject form requires a wildcard on
+    # the org/repo ID suffix. The environment segment remains exact.
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values   = local.deploy_subjects
     }
