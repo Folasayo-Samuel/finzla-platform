@@ -4,7 +4,7 @@ output "repository_url" {
 }
 
 output "repository_arn" {
-  description = "ARN — used to scope the CI push policy and the task execution pull policy."
+  description = "ARN - used to scope the CI push policy and the task execution pull policy."
   value       = aws_ecr_repository.app.arn
 }
 

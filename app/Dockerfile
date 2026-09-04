@@ -20,7 +20,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1 — build dependencies
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +40,7 @@ RUN pip install -r requirements.txt
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime
 # ---------------------------------------------------------------------------
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Build metadata, injected by CI. These are the only values that change per
 # build, and they sit at the end of the file so earlier layers stay cached.

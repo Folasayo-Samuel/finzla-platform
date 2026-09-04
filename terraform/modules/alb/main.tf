@@ -62,7 +62,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_tasks" {
 
 resource "aws_security_group" "tasks" {
   name        = "${local.name}-tasks"
-  description = "Application tasks — ingress only from the ALB"
+  description = "Application tasks - ingress only from the ALB"
   vpc_id      = var.vpc_id
 
   tags = { Name = "${local.name}-tasks-sg" }

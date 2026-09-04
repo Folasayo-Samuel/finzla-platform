@@ -220,11 +220,11 @@ resource "aws_vpc_security_group_ingress_rule" "endpoints_https" {
 
 locals {
   interface_endpoints = var.enable_vpc_endpoints ? {
-    ecr_api         = "com.amazonaws.${var.aws_region}.ecr.api"
-    ecr_dkr         = "com.amazonaws.${var.aws_region}.ecr.dkr"
-    logs            = "com.amazonaws.${var.aws_region}.logs"
-    secretsmanager  = "com.amazonaws.${var.aws_region}.secretsmanager"
-    ssm             = "com.amazonaws.${var.aws_region}.ssm"
+    ecr_api        = "com.amazonaws.${var.aws_region}.ecr.api"
+    ecr_dkr        = "com.amazonaws.${var.aws_region}.ecr.dkr"
+    logs           = "com.amazonaws.${var.aws_region}.logs"
+    secretsmanager = "com.amazonaws.${var.aws_region}.secretsmanager"
+    ssm            = "com.amazonaws.${var.aws_region}.ssm"
   } : {}
 }
 
