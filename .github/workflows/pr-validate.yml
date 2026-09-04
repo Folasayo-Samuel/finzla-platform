@@ -225,6 +225,12 @@ jobs:
   terraform:
     name: Terraform (${{ matrix.environment }})
     runs-on: ubuntu-latest
+    # Declared at job level too — a workflow-level block can be capped by
+    # repository settings, and OIDC silently fails without id-token: write.
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
