@@ -66,6 +66,10 @@ jobs:
         working-directory: app
         run: PYTHONPATH=. python tests/verify_behaviour.py
 
+      # GHA cache export needs the container driver; the default docker
+      # driver cannot export cache.
+      - uses: docker/setup-buildx-action@v4
+
       # Build here purely as a gate — the image is NOT pushed from a PR.
       # Pushing from an untrusted PR branch would let a fork poison the
       # registry.
@@ -151,6 +155,8 @@ jobs:
           category: checkov
 
       # 2. Container and dependency CVE scanning.
+      - uses: docker/setup-buildx-action@v4
+
       - name: Build image for scanning
         uses: docker/build-push-action@v7
         with:
@@ -160,7 +166,7 @@ jobs:
           tags: finzla-app:scan
 
       - name: Trivy (image and dependency CVEs)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: finzla-app:scan
           format: sarif
@@ -179,7 +185,7 @@ jobs:
       # SARIF upload above always runs and findings are visible even on a
       # failing build.
       - name: Fail on critical CVEs
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: finzla-app:scan
           format: table
